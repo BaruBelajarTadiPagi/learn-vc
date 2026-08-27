@@ -1,41 +1,40 @@
-# [Feature] User Registration API with ElysiaJS, Drizzle ORM, and Password Hashing
+# [Feature] User Login API and Session Management
 
 ## 📌 Objective
-Mengimplementasikan fitur registrasi user baru (`POST /api/users`) lengkap dengan hashing password menggunakan `bcrypt`, validasi data, serta penataan arsitektur modular (`routes` & `services`) di dalam folder `src/`. Dokumen ini ditujukan sebagai panduan kerja langkah demi langkah untuk programmer atau AI coding model.
+Mengimplementasikan fitur login user dan manajemen sesi (session). Fitur ini akan memvalidasi kredensial user, membuat session token berupa UUID, dan menyimpannya ke database. Dokumen ini ditujukan sebagai panduan kerja langkah demi langkah untuk programmer atau AI coding model.
 
 ---
 
 ## 🛠 Spesifikasi Teknis
 
-### 1. Database Schema (`users` table)
-Tabel `users` pada MySQL harus memiliki kolom berikut:
+### 1. Database Schema (`sessions` table)
+Buat tabel `sessions` pada MySQL dengan spesifikasi berikut:
 - `id`: Integer, Primary Key, Auto Increment
-- `name`: VARCHAR(255), Not Null
-- `email`: VARCHAR(255), Not Null, Unique
-- `password`: VARCHAR(255), Not Null (Menyimpan hash password dari `bcrypt` / `Bun.password`)
+- `token`: VARCHAR(255), Not Null (Akan diisi dengan UUID untuk token sesi user)
+- `user_id`: Integer, Not Null (Foreign Key yang mengarah ke tabel `users`)
 - `created_at`: TIMESTAMP, Not Null, Default `CURRENT_TIMESTAMP`
 
 ### 2. API Contract
-- **Endpoint**: `POST /api/users`
+- **Endpoint**: `POST /api/users/login` *(Catatan: Disarankan menggunakan path `/login` agar tidak bentrok dengan endpoint registrasi `POST /api/users`)*
 - **Request Headers**: `Content-Type: application/json`
 - **Request Body**:
   ```json
   {
-    "name": "Eko",
     "email": "eko@gmail.com",
     "password": "rahasia"
   }
   ```
-- **Response Success (HTTP 201 / 200)**:
+  *(Catatan: Field `name` opsional untuk login, yang utama adalah `email` dan `password`)*
+- **Response Success (HTTP 200)**:
   ```json
   {
-    "data": "OK"
+    "data": "token-uuid-disini"
   }
   ```
-- **Response Error - Email Duplikat (HTTP 400 / 409)**:
+- **Response Error (HTTP 401)**:
   ```json
   {
-    "error": "Email sudah terdaftar"
+    "error": "email atau password salah"
   }
   ```
 
@@ -43,76 +42,54 @@ Tabel `users` pada MySQL harus memiliki kolom berikut:
 
 ## 📁 Struktur Folder & File (`src/`)
 
-Susun struktur project di bawah direktori `src/` dengan pola modular berikut:
-
-```
-src/
-├── db/
-│   ├── index.ts          # Database pool connection
-│   └── schema.ts         # Definisi schema tabel Drizzle
-├── services/
-│   └── user-service.ts   # Logic bisnis (cek email, hash password, insert database)
-├── routes/
-│   └── users-routes.ts   # Routing ElysiaJS & validasi request body
-└── index.ts              # Entry point Elysia server (mount router)
-```
-
-> **Aturan Penamaan File:**
-> - File routing berada di folder `src/routes/` dengan format `users-routes.ts`
-> - File service berada di folder `src/services/` dengan format `user-service.ts`
+Gunakan struktur folder dan penamaan file modular berikut:
+- **Routes** (`src/routes/`): Tambahkan endpoint login ke file `users-routes.ts` (atau buat file baru `sessions-routes.ts`).
+- **Services** (`src/services/`): Tambahkan logic login ke file `user-service.ts`.
 
 ---
 
 ## 📋 Tahapan Implementasi (Step-by-Step)
 
-### Langkah 1: Update Schema Drizzle (`src/db/schema.ts`)
+### Langkah 1: Buat Schema Tabel Sessions (`src/db/schema.ts`)
 1. Buka file `src/db/schema.ts`.
-2. Perbarui atau definisikan tabel `users` dengan kolom:
-   - `id`: `serial("id").primaryKey()` atau `int("id").autoincrement().primaryKey()`
-   - `name`: `varchar("name", { length: 255 }).notNull()`
-   - `email`: `varchar("email", { length: 255 }).notNull().unique()`
-   - `password`: `varchar("password", { length: 255 }).notNull()`
-   - `createdAt`: `timestamp("created_at").defaultNow().notNull()`
-3. Jalankan `bun run db:generate` dan `bun run db:push` untuk menyinkronkan perubahan ke database MySQL.
+2. Definisikan tabel baru `sessions`:
+   - Gunakan `mysqlTable` dari `drizzle-orm/mysql-core`.
+   - Tambahkan kolom `id` (`serial`), `token` (`varchar(255)`), `userId` (`int` dengan foreign key reference ke `users.id`), dan `createdAt` (`timestamp`).
+3. Tambahkan relasi jika diperlukan (opsional).
+4. Jalankan perintah `bun run db:generate` untuk membuat file migrasi SQL.
+5. Jalankan perintah `bun run db:push` atau `bun run db:migrate` untuk mengaplikasikan tabel baru ke database MySQL.
 
-### Langkah 2: Buat User Service (`src/services/user-service.ts`)
-1. Buat folder `src/services/` jika belum ada, lalu buat file `user-service.ts`.
-2. Buat fungsi registrasi (misal: `registerUser({ name, email, password })`).
-3. Di dalam fungsi:
-   - Cek apakah `email` sudah ada di database menggunakan Drizzle query `db.select().from(users).where(eq(users.email, email))`.
-   - Jika email sudah terdaftar, lempar error atau kembalikan response error: `"Email sudah terdaftar"`.
-   - Hash `password` menggunakan `await Bun.password.hash(password, { algorithm: "bcrypt" })` (atau library `bcryptjs`/`bcrypt`).
-   - Simpan user baru ke database (`db.insert(users).values(...)`).
-   - Kembalikan status sukses.
+### Langkah 2: Tambahkan Logic Login di Service (`src/services/user-service.ts`)
+1. Buka file `src/services/user-service.ts`.
+2. Buat fungsi baru, misalnya `login(email, password)`.
+3. Di dalam fungsi `login`:
+   - Cari user di database berdasarkan `email` menggunakan query Drizzle.
+   - Jika user tidak ditemukan, lemparkan error (throw error) `"email atau password salah"`.
+   - Jika user ditemukan, verifikasi password menggunakan `Bun.password.verify(password, hashedPasswordFromDB)`.
+   - Jika password tidak cocok, lemparkan error `"email atau password salah"`.
+   - Jika kredensial valid, buat UUID baru untuk token sesi (bisa menggunakan `crypto.randomUUID()`).
+   - Simpan token tersebut beserta `user_id` ke tabel `sessions` menggunakan query `db.insert(sessions)`.
+   - Kembalikan token tersebut (misal: `{ data: "uuid-token" }`).
 
-### Langkah 3: Buat Route Registrasi (`src/routes/users-routes.ts`)
-1. Buat folder `src/routes/` jika belum ada, lalu buat file `users-routes.ts`.
-2. Buat instance router Elysia baru:
-   - Definisikan endpoint `POST /api/users` (atau route `/` jika di-prefix dengan `/api/users`).
-   - Gunakan schema validation Elysia `t.Object({ name: t.String(), email: t.String({ format: "email" }), password: t.String() })`.
-   - Panggil service `registerUser` dari `src/services/user-service.ts`.
-   - Jika sukses, set response `{ "data": "OK" }`.
-   - Jika email sudah terdaftar atau gagal, tangkap error dan set response format `{ "error": "Email sudah terdaftar" }` dengan HTTP status yang sesuai.
+### Langkah 3: Buat Endpoint Login di Routes (`src/routes/users-routes.ts`)
+1. Buka file `src/routes/users-routes.ts`.
+2. Tambahkan endpoint baru `.post("/login", ...)` ke dalam router.
+3. Gunakan validasi schema Elysia (`t.Object`) untuk memastikan request body memiliki `email` dan `password`.
+4. Panggil fungsi `UserService.login(...)`.
+5. Jika sukses, kembalikan response dengan status 200 dan body `{ data: "token" }`.
+6. Jika terjadi error (ditangkap oleh blok `catch`), cek apakah error message-nya adalah `"email atau password salah"`. Jika ya, kembalikan status 401 Unauthorized dengan body `{ error: "email atau password salah" }`.
 
-### Langkah 4: Hubungkan Route ke Entry Point (`src/index.ts`)
-1. Buka file `src/index.ts`.
-2. Import router dari `src/routes/users-routes.ts`.
-3. Pasang (mount) router menggunakan `.use(usersRoutes)` pada instance utama Elysia app.
-
-### Langkah 5: Pengujian & Verifikasi
-1. Jalankan server dengan `bun run dev`.
-2. Lakukan request `POST /api/users` dengan data baru:
-   - Pastikan response mengembalikan `{"data": "OK"}`.
-   - Periksa database MySQL untuk memastikan password tersimpan dalam bentuk hash (bukan plaintext).
-3. Lakukan request `POST /api/users` kembali dengan email yang sama:
-   - Pastikan response mengembalikan `{"error": "Email sudah terdaftar"}`.
+### Langkah 4: Pengujian & Verifikasi
+1. Pastikan server berjalan dengan `bun run dev`.
+2. Lakukan request POST ke endpoint login menggunakan kredensial yang salah. Pastikan menerima error `401`.
+3. Lakukan request POST dengan kredensial yang benar. Pastikan menerima response sukses berisi token UUID.
+4. Cek database MySQL (tabel `sessions`) untuk memastikan record sesi berhasil terbuat.
 
 ---
 
 ## 🎯 Acceptance Criteria
-- [ ] Schema `users` memiliki kolom `id`, `name`, `email`, `password`, dan `created_at`.
-- [ ] Folder `src/routes/` dan `src/services/` dibuat sesuai aturan penamaan file (`users-routes.ts` & `user-service.ts`).
-- [ ] Endpoint `POST /api/users` menerima request body `name`, `email`, `password`.
-- [ ] Password di-hash menggunakan algoritma `bcrypt` sebelum disimpan ke database.
-- [ ] Mengembalikan `{ "data": "OK" }` jika pendaftaran berhasil.
-- [ ] Mengembalikan `{ "error": "Email sudah terdaftar" }` jika email sudah ada di database.
+- [ ] Tabel `sessions` berhasil dibuat di database dengan foreign key ke tabel `users`.
+- [ ] Fungsi login memvalidasi kecocokan password menggunakan hashing (misal: bcrypt).
+- [ ] Token sesi (UUID) di-generate secara unik untuk setiap login yang berhasil dan tersimpan di database.
+- [ ] Endpoint mengembalikan response error yang seragam (`"email atau password salah"`) baik saat email tidak ditemukan maupun saat password salah, untuk alasan keamanan.
+- [ ] Struktur kode tetap mengikuti pattern modular di `routes` dan `services`.
